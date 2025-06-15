@@ -71,13 +71,18 @@ A modern browser (e.g., Chrome)
 
 ```bash
 git clone https://github.com/harshitstark13/CLO-Management-System.git
-cd CLO-Management-System
+```
 
+```bash
+cd CLO-Management-System
+```
 
 2. Install Dependencies
+```bash
 npm install
-
+```
 3. Run the Development Server
+```bash
 npm run dev
 ```
 
