@@ -12,8 +12,6 @@ The **CLO Management System** is a role-based web application built to digitize 
 - [Getting Started](#-getting-started)
 - [Roles and Access](#-roles-and-access)
 - [Use Cases](#-use-cases)
-- [License](#-license)
-- [Author](#-author)
 - [Disclaimer](#-disclaimer)
 
 ---
