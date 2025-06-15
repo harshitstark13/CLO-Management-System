@@ -1,68 +1,95 @@
-# CLO Evaluation Project
+# CLO Management System
 
-# 📦 Material Kit React - Free Admin Dashboard
-
-A **modern React admin dashboard** built with **Material-UI** components and powered by **Vite.js**. This free version offers essential pages and features for building sleek, responsive interfaces.
-
-> ⚡ Fast, lightweight, and developer-friendly. Ideal for dashboards, admin panels, or any web application backend UI.
+The **CLO Management System** is a role-based web application built to digitize and streamline the process of defining, evaluating, and analyzing Course Learning Outcomes (CLOs). Developed as part of an internship project at Thapar Institute of Engineering and Technology (TIET), this system improves the efficiency and accuracy of academic performance tracking for educational institutions.
 
 ---
 
-## 📸 Preview
-![CLO_Eval_SS](./CloHompage.png)
+## 📌 Table of Contents
+
+- [Tech Stack](#-tech-stack)
+- [Features](#-features)
+- [Project Structure](#-project-structure)
+- [Getting Started](#-getting-started)
+- [Roles and Access](#-roles-and-access)
+- [Use Cases](#-use-cases)
+- [License](#-license)
+- [Author](#-author)
+- [Disclaimer](#-disclaimer)
 
 ---
 
-## 📑 Included Pages
+## 🔧 Tech Stack
 
-- 🧭 Dashboard  
-- 👤 Users  
-- 📦 Products  
-- 📝 Blog  
-- 🔐 Sign In  
-- ❌ 404 Not Found  
+- **Frontend:** React.js, Vite, Material-UI, React-CSV
+- **State Management:** React Hooks
+- **Version Control:** Git & GitHub
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Features
 
-Follow the steps below to set up the project locally:
+- 🔐 Role-based login (Admin, Course Coordinator, Instructor)
+- 📄 Define and manage Course Learning Outcomes
+- 📊 Upload and manage student marks
+- ⚙️ Automatic CLO attainment calculation
+- 📈 Real-time data visualization of performance
+- 📤 Export reports in CSV format
 
-# 1. Clone the Repository
+---
 
-git clone https://github.com/harshitstark13/clo_eval_project
+## 📁 Project Structure
 
-cd clo_eval_project
+CLO-Management-System/
+│
+├── public/ # Static assets
+├── src/
+│ ├── assets/ # Images, icons
+│ ├── components/ # Reusable UI components
+│ ├── pages/ # Route-based views
+│ ├── services/ # API service functions
+│ ├── App.jsx # Root component
+│ └── main.jsx # Entry point
+├── .gitignore
+├── package.json
+└── vite.config.js
 
-# 2. Install Dependencies
-npm install
-# or
-yarn install
 
+---
 
-# 3. Start the Development Server
-npm run dev
-# or
-yarn dev
+## 🖥️ Getting Started
 
-Open your browser and navigate to:
-http://localhost:3039
+### 1. Clone the Repository
 
-# 4. Build for Production
-npm run build
-# or
-yarn build
-
-# ⚙️ Requirements
-Node.js v20.x (Recommended)
-
-# 📄 License
-This project is licensed under the MIT License.
-Feel free to use it in your personal or commercial projects.
-
-# 📬 Contact
-Need help or have questions?
-
-📧 Email us at: support@minimals.cc
 ```bash
+git clone https://github.com/harshitstark13/CLO-Management-System.git
+cd CLO-Management-System
 
+
+2. Install Dependencies
+npm install
+
+3. Run the Development Server
+npm run dev
+
+
+| Role               | Permissions                                          |
+| ------------------ | ---------------------------------------------------- |
+| Admin              | View and manage all modules, assign roles            |
+| Course Coordinator | Define CLOs, assign instructors, monitor performance |
+| Instructor         | Enter student marks, view attainment data            |
+
+
+📌 Use Cases
+Replace manual CLO tracking with an automated digital system
+
+Improve academic monitoring and reporting
+
+Export performance data for internal reviews and audits
+
+Provide educators with insights for improving learning outcomes
+
+
+⚠️ Disclaimer
+This project was developed as part of an internship at TIET under mentorship.
+It is strictly prohibited to use, copy, modify, distribute, or deploy this software without prior written permission from the developer and the mentors involved.
+All rights are reserved.
