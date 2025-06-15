@@ -41,23 +41,27 @@ The **CLO Management System** is a role-based web application built to digitize 
 
 🗺️ ER Diagram for Efficient Task Workflow
 Visualizes entities (Users, Courses, CLOs, Assessments) and their relations.
-Screenshots/ER Diagram1.jpg
+![ER Diagram](Screenshots/ER Diagram1.jpg)
+
 
 🔐 Login & Authentication Interface
 Simple, secure login with role selection and JWT handling.
-Screenshots/Login Page 2.jpg
+![Login Interface](Screenshots/Login Page 2.jpg)
 
 🛠️ Admin Dashboard
 Global view to manage users, courses, and department analytics.
-Screenshots/Admmin Dashboard 3.jpg
+![Admin Dashboard](Screenshots/Admmin Dashboard 3.jpg)
+
 
 🗂️ Course Coordinator Dashboard
 Defines CLOs, maps them to assessments, and assigns instructors.
-Screenshots/CC Dashboard 4.jpg
+![Course Coordinator Dashboard](Screenshots/CC Dashboard 4.jpg)
+
 
 📝 Forms for CLO Definition & Marks Upload
 CSV upload, inline editing, and validation for quick data entry.
-Screenshots/CLO Def 5.jpg
+![CLO Definition](Screenshots/CLO Def 5.jpg)
+
 
 ---
 
