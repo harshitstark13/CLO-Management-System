@@ -41,7 +41,7 @@ The **CLO Management System** is a role-based web application built to digitize 
 
 ### 🗺️ ER Diagram for Efficient Task Workflow  
 Visualizes entities (Users, Courses, CLOs, Assessments) and their relations.  
-![ER Diagram](Screenshots/ER Diagram1.jpg)
+![ER Diagram](Screenshots/ER-Diagram1.jpg)
 
 ### 🔐 Login & Authentication Interface  
 Simple, secure login with role selection and JWT handling.  
