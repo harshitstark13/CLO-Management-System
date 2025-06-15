@@ -1,0 +1,2026 @@
+
+
+==================================================
+// server.js
+==================================================
+
+require('dotenv').config();
+const express = require('express');
+const connectDB = require('./config/db');
+const cors = require('cors');
+
+const adminRoutes = require('./routes/adminRoutes');
+const instructorRoutes = require('./routes/instructorRoutes');
+const authRoutes = require('./routes/authRoutes');
+const subjectRoutes = require('./routes/subjectRoutes'); // New subject routes
+const studentRoutes = require('./routes/studentRoutes');
+const ccRoutes = require('./routes/ccRoutes'); // Added course coordinator routes
+
+const app = express();
+
+// Connect to MongoDB
+connectDB();
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+const corsOptions = {
+  origin: 'http://localhost:3039', // Your frontend URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+
+// Handle preflight requests for all routes
+app.options(/(.*)/, cors(corsOptions));
+
+// Routes
+app.use('/api/admin', adminRoutes);
+app.use('/api/instructor', instructorRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/subjects', subjectRoutes);
+app.use('/api/students', studentRoutes);
+app.use('/api/cc', ccRoutes); // Mount CC routes
+
+// Start the server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+
+==================================================
+// authMiddleware.js
+==================================================
+
+const jwt = require('jsonwebtoken');
+const User = require('../models/userModel');
+
+exports.protect = async (req, res, next) => {
+  let token;
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith('Bearer')
+  ) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+  if (!token) {
+    return res.status(401).json({ message: 'Not authorized, no token' });
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Populate req.user with full user data, not just excluding password
+    req.user = await User.findById(decoded.id).select('-password');
+    if (!req.user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    // Ensure coordinatorFor is available from token if present
+    if (decoded.coordinatorFor) {
+      req.user.coordinatorFor = decoded.coordinatorFor;
+    }
+    next();
+  } catch (error) {
+    console.error('Token verification error:', error);
+    return res.status(401).json({ message: 'Token verification failed' });
+  }
+};
+
+exports.adminOnly = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ message: 'Forbidden: Admins only' });
+  }
+  next();
+};
+
+exports.instructorOnly = (req, res, next) => {
+  if (req.user?.role !== 'instructor') {
+    return res.status(403).json({ message: 'Forbidden: Instructors only' });
+  }
+  next();
+};
+
+exports.courseCoordinatorOnly = (req, res, next) => {
+  console.log('Checking CC authorization:', {
+    userId: req.user?._id,
+    coordinatorFor: req.user?.coordinatorFor,
+  });
+  if (!req.user || !req.user.coordinatorFor) {
+    return res
+      .status(403)
+      .json({ message: 'Forbidden: Course Coordinators only' });
+  }
+  next();
+};
+
+==================================================
+// db.js
+==================================================
+
+// config/db.js
+const mongoose = require('mongoose');
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    });
+    console.log("MongoDB connected");
+  } catch (err) {
+    console.error("DB connection error:", err);
+    process.exit(1); // Stop the process if DB fails to connect
+  }
+};
+
+module.exports = connectDB;
+
+
+==================================================
+// studentMarkModel.js
+==================================================
+
+// models/studentMarkModel.js
+const mongoose = require('mongoose');
+
+const studentMarkSchema = new mongoose.Schema({
+  subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true },
+  rollNo: { type: String, required: true },
+  instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  evalCriteria: { type: String, required: true },
+  data: { type: Map, of: String }, // Question marks (e.g., { "MST_Q1": "8", "MST_Q2": "12" })
+  cloMarks: { type: Map, of: Number, default: () => new Map() }, // Student’s achieved marks per CLO (e.g., { "CLO1": 20, "CLO2": 23 })
+  cloTotals: { type: Map, of: Number, default: () => new Map() }, // Total possible marks per CLO (e.g., { "CLO1": 25, "CLO2": 30 })
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model('StudentMark', studentMarkSchema);
+
+==================================================
+// subjectModel.js
+==================================================
+
+// models/subjectModel.js
+const mongoose = require('mongoose');
+
+const partSchema = new mongoose.Schema({
+  partNo: Number,
+  maxMarks: Number,
+  cloMappings: [String], // Array of CLO identifiers (e.g., ["CLO1", "CLO2"])
+}, { _id: false });
+
+const questionSchema = new mongoose.Schema({
+  questionNo: Number,
+  maxMarks: Number,
+  parts: [partSchema],
+  cloMappings: [String], // Array of CLO identifiers (e.g., ["CLO1", "CLO2"])
+}, { _id: false });
+
+const evaluationCriteriaSchema = new mongoose.Schema({
+  totalMarks: Number,
+  weightage: Number,
+  questions: [questionSchema],
+}, { _id: false });
+
+const evaluationSchema = new mongoose.Schema({
+  type: mongoose.Schema.Types.Mixed,
+}, { strict: false });
+
+const csvFormatSchema = new mongoose.Schema({
+  columns: { type: Array, default: [] },
+}, { _id: false });
+
+const cloSchema = new mongoose.Schema({
+  cloNumber: Number,
+  cloStatement: String,
+}, { _id: false });
+
+const instructorStudentSchema = new mongoose.Schema({
+  instructorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  students: [{ rollNo: String }],
+}, { _id: false });
+
+const subjectSchema = new mongoose.Schema({
+  subjectName: { type: String, required: true },
+  subjectCode: { type: String, required: true, unique: true },
+  department: { type: String, required: true },
+  instructors: [instructorStudentSchema],
+  coordinator: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  CLOs: [cloSchema],
+  evaluationSchema: { type: evaluationSchema, default: {} },
+  csvFormat: { type: csvFormatSchema, default: {} },
+}, { timestamps: true });
+
+module.exports = mongoose.model('Subject', subjectSchema);
+
+==================================================
+// userModel.js
+==================================================
+
+// models/userModel.js
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    role: { type: String, enum: ['admin', 'instructor'], default: 'instructor' },
+    department: { type: String },
+    coordinatorFor: { type: String, default: null }, // If instructor is CC of a subject
+    assignedSubjects: [
+      {
+        subjectCode: String,
+        isCoordinator: { type: Boolean, default: false }
+      }
+    ],
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true } // Store hashed password in production
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('User', userSchema);
+
+
+==================================================
+// markModel.js
+==================================================
+
+// models/markModel.js
+const mongoose = require('mongoose');
+
+const markSchema = new mongoose.Schema(
+  {
+    subjectCode: { type: String, required: true },
+    rollNo: { type: String, required: true },
+
+    // Example fields for MST, EST, Lab, Project, etc.
+    MSTQ1: { type: Number, default: 0 },
+    MSTQ2: { type: Number, default: 0 },
+    MSTQ3: { type: Number, default: 0 },
+    LABEVAL: { type: Number, default: 0 },
+    PROJECT: { type: Number, default: 0 },
+    QUIZ: { type: Number, default: 0 },
+    ESTQ1: { type: Number, default: 0 },
+    ESTQ2: { type: Number, default: 0 },
+    ESTQ3: { type: Number, default: 0 },
+    ESTQ4: { type: Number, default: 0 },
+    ESTQ5: { type: Number, default: 0 },
+
+    // CLO-wise marks
+    CLO1: { type: Number, default: 0 },
+    CLO2: { type: Number, default: 0 },
+    CLO3: { type: Number, default: 0 },
+    CLO4: { type: Number, default: 0 },
+
+    totalMarks: { type: Number, default: 0 }
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('Mark', markSchema);
+
+
+==================================================
+// batchModel.js
+==================================================
+
+// models/batchModel.js
+const mongoose = require('mongoose');
+
+const studentSchema = new mongoose.Schema(
+  {
+    rollNo: String,
+    name: String,
+    department: String
+  },
+  { _id: false }
+);
+
+const batchSchema = new mongoose.Schema(
+  {
+    batchId: { type: String, required: true, unique: true }, // e.g. "b1", "b2"
+    department: { type: String },
+    students: [studentSchema] // 30 students per batch
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('Batch', batchSchema);
+
+
+==================================================
+// departmentModel.js
+==================================================
+
+// models/departmentModel.js
+const mongoose = require('mongoose');
+
+const departmentSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+module.exports = mongoose.model('Department', departmentSchema);
+
+==================================================
+// seed.js
+==================================================
+
+// scripts/seed.js
+require('dotenv').config();
+const bcrypt = require('bcryptjs');
+const mongoose = require('mongoose');
+const connectDB = require('../config/db');
+const User = require('../models/userModel');
+const Batch = require('../models/batchModel');
+const Subject = require('../models/subjectModel');
+
+const DEPARTMENTS = ['CSE', 'ECE', 'ME', 'CE', 'EE', 'IT'];
+const deptPrefix = { CSE: 'CS', ECE: 'ECE', ME: 'ME', CE: 'CE', EE: 'EE', IT: 'IT' };
+
+// Fixed Indian names for teachers (8 per dept, 48 total)
+const teacherNames = [
+  // CSE
+  'Aarav Sharma', 'Priya Patel', 'Rohan Gupta', 'Neha Verma', 'Vikram Singh', 'Anjali Nair', 'Kiran Rao', 'Pooja Joshi',
+  // ECE
+  'Suresh Kumar', 'Meera Reddy', 'Rahul Malhotra', 'Kavita Thakur', 'Arjun Das', 'Sneha Bhat', 'Deepak Iyer', 'Shalini Chopra',
+  // ME
+  'Nikhil Saxena', 'Tara Pillai', 'Amit Kapoor', 'Riya Mehta', 'Sanjay Yadav', 'Divya Bose', 'Manish Jain', 'Jyoti Sen',
+  // CE
+  'Vivek Rawat', 'Aditya Desai', 'Simran Kaur', 'Prakash Rana', 'Lakshmi Shetty', 'Kunal Shah', 'Amit Sharma', 'Bhavna Patel',
+  // EE
+  'Chetan Gupta', 'Deepika Verma', 'Esha Singh', 'Farhan Nair', 'Gauri Rao', 'Harsh Joshi', 'Isha Kumar', 'Jatin Reddy',
+  // IT
+  'Komal Malhotra', 'Lalit Thakur', 'Mansi Das', 'Naveen Bhat', 'Ojas Iyer', 'Poonam Chopra', 'Qasim Saxena', 'Ritu Pillai'
+];
+
+// Fixed Indian names for students (90 per batch, truncated for brevity, repeat pattern as needed)
+const studentNames = [
+  'Amit Sharma', 'Bhavna Patel', 'Chetan Gupta', 'Deepika Verma', 'Esha Singh', 'Farhan Nair', 'Gauri Rao', 'Harsh Joshi',
+  'Isha Kumar', 'Jatin Reddy', 'Komal Malhotra', 'Lalit Thakur', 'Mansi Das', 'Naveen Bhat', 'Ojas Iyer', 'Poonam Chopra',
+  'Qasim Saxena', 'Ritu Pillai', 'Sameer Kapoor', 'Tanya Mehta', 'Uday Yadav', 'Vinita Bose', 'Wasim Jain', 'Xavier Sen',
+  'Yash Rajput', 'Zara Khan', 'Aditi Sharma', 'Bharat Patel', 'Chirag Gupta', 'Divya Verma', 'Ekta Singh', 'Faisal Nair',
+  'Geeta Rao', 'Hitesh Joshi', 'Indu Kumar', 'Javed Reddy', 'Kiran Malhotra', 'Lata Thakur', 'Mohit Das', 'Nidhi Bhat',
+  'Om Iyer', 'Preeti Chopra', 'Rahim Saxena', 'Sana Pillai', 'Tarun Kapoor', 'Uma Mehta', 'Vijay Yadav', 'Wendy Bose',
+  'Xena Jain', 'Yogesh Sen', 'Zain Rawat', 'Ankit Desai', 'Bindu Kaur', 'Chandan Rana', 'Diya Shetty', 'Eshan Shah',
+  'Firoz Sharma', 'Gopal Patel', 'Hina Gupta', 'Irfan Verma', 'Juhi Singh', 'Kabir Nair', 'Leela Rao', 'Mahesh Joshi',
+  'Nisha Kumar', 'Omar Reddy', 'Padmini Malhotra', 'Qadir Thakur', 'Rekha Das', 'Sachin Bhat', 'Tina Iyer', 'Umesh Chopra',
+  'Vani Saxena', 'Waqar Pillai', 'Yamini Kapoor', 'Zaid Mehta', 'Arun Yadav', 'Bina Bose', 'Chitra Jain', 'Dhruv Sen',
+  'Eshita Rawat', 'Fahad Desai', 'Gita Kaur', 'Hari Rana', 'Ila Shetty', 'Jai Shah'
+];
+
+async function seed() {
+  try {
+    await connectDB();
+    console.log('Clearing existing data...');
+    await User.deleteMany({});
+    await Batch.deleteMany({});
+    await Subject.deleteMany({});
+
+    // 1. Create ONE Admin User
+    console.log('Seeding Admin User...');
+    const adminPassword = await bcrypt.hash('admin123', 10);
+    const adminUser = new User({
+      name: 'Admin User',
+      role: 'admin',
+      department: 'Administration',
+      coordinatorFor: null,
+      assignedSubjects: [],
+      email: 'admin@example.com',
+      password: adminPassword,
+    });
+    await adminUser.save();
+
+    // 2. Create Fixed Instructors (8 per department = 48 total)
+    console.log('Seeding Instructors...');
+    const teachersToInsert = [];
+    let teacherCounter = 1;
+    for (let i = 0; i < DEPARTMENTS.length * 8; i++) {
+      const deptIndex = Math.floor(i / 8);
+      const dept = DEPARTMENTS[deptIndex];
+      const teacherName = teacherNames[i];
+      const teacherEmail = `teacher${teacherCounter}@example.com`;
+      const teacherPassword = await bcrypt.hash('teacher123', 10);
+      teachersToInsert.push({
+        name: teacherName,
+        role: 'instructor',
+        department: dept,
+        coordinatorFor: null,
+        assignedSubjects: [],
+        email: teacherEmail,
+        password: teacherPassword,
+      });
+      teacherCounter++;
+    }
+    const teachers = await User.insertMany(teachersToInsert);
+
+    // 3. Create Fixed Subjects (5 per department = 30 total)
+    console.log('Seeding Subjects...');
+    const subjectsToInsert = [];
+    for (const dept of DEPARTMENTS) {
+      for (let i = 1; i <= 5; i++) {
+        subjectsToInsert.push({
+          subjectName: `${dept} Subject ${i}`,
+          subjectCode: `${deptPrefix[dept]}${100 + i}`,
+          department: dept,
+          instructors: [],
+          coordinator: null,
+          CLOs: [],
+          evaluationSchema: {},
+        });
+      }
+    }
+    const subjects = await Subject.insertMany(subjectsToInsert);
+
+    // 4. Assign Teachers to Subjects Deterministically
+    console.log('Assigning Teachers to Subjects...');
+    const teachersByDept = {};
+    DEPARTMENTS.forEach((dept) => {
+      teachersByDept[dept] = teachers.filter((t) => t.department === dept);
+    });
+
+    const ccAssigned = new Set(); // Track teachers assigned as CC
+
+    // Step 1: Assign each subject a CC (first 5 teachers) and initial instructors
+    for (let i = 0; i < subjects.length; i++) {
+      const subject = subjects[i];
+      const deptTeachers = teachersByDept[subject.department];
+      const ccIndex = i % 5; // Use first 5 teachers as CCs (0-4)
+
+      // Assign coordinator
+      const coordinator = deptTeachers[ccIndex];
+      if (ccAssigned.has(coordinator._id.toString())) {
+        throw new Error(`Coordinator already assigned for ${coordinator.name}`);
+      }
+      ccAssigned.add(coordinator._id.toString());
+      subject.coordinator = coordinator._id;
+      coordinator.coordinatorFor = subject.subjectCode;
+      coordinator.assignedSubjects.push({ subjectCode: subject.subjectCode, isCoordinator: true });
+
+      // Assign 3 instructors (CC + 2 others, including non-CC teachers)
+      const instructorIndices = [
+        ccIndex,              // CC
+        (ccIndex + 5) % 8,    // First non-CC teacher (5, 6, or 7)
+        (ccIndex + 6) % 8,    // Second non-CC teacher (6, 7, or 5)
+      ];
+      subject.instructors = instructorIndices.map((idx) => ({
+        instructorId: deptTeachers[idx]._id,
+        students: [], // Students to be tagged via CSV
+      }));
+
+      for (const idx of instructorIndices) {
+        const teacher = deptTeachers[idx];
+        if (!teacher._id.equals(coordinator._id)) {
+          teacher.assignedSubjects.push({ subjectCode: subject.subjectCode, isCoordinator: false });
+        }
+      }
+
+      await subject.save();
+    }
+
+    // Step 2: Ensure every teacher has at least 2 subjects
+    for (const dept of DEPARTMENTS) {
+      const deptTeachers = teachersByDept[dept];
+      const deptSubjects = subjects.filter((s) => s.department === dept);
+
+      for (let t = 0; t < deptTeachers.length; t++) {
+        const teacher = deptTeachers[t];
+        while (teacher.assignedSubjects.length < 2) {
+          const availableSubject = deptSubjects.find(
+            (s) =>
+              !teacher.assignedSubjects.some((as) => as.subjectCode === s.subjectCode) &&
+              !s.instructors.some((i) => i.instructorId.equals(teacher._id))
+          );
+          if (availableSubject) {
+            teacher.assignedSubjects.push({
+              subjectCode: availableSubject.subjectCode,
+              isCoordinator: false,
+            });
+            availableSubject.instructors.push({
+              instructorId: teacher._id,
+              students: [],
+            });
+            await availableSubject.save();
+          } else {
+            console.warn(`No more subjects available for ${teacher.name} in ${dept}`);
+            break;
+          }
+        }
+        await teacher.save();
+      }
+    }
+
+    // 5. Create Batches with Fixed Students
+    console.log('Seeding Batches with Students...');
+    const batchesToInsert = [];
+    for (const dept of DEPARTMENTS) {
+      for (let b = 1; b <= 5; b++) {
+        const batchId = `${dept.toLowerCase()}${b}`;
+        const students = [];
+        const nameOffset = (DEPARTMENTS.indexOf(dept) * 5 + (b - 1)) * 90; // Unique offset per batch
+        for (let s = 1; s <= 90; s++) {
+          const rollNo = `${batchId}-${s}`;
+          const studentName = studentNames[(nameOffset + s - 1) % studentNames.length]; // Cycle through names
+          students.push({
+            rollNo,
+            name: studentName,
+            department: dept,
+          });
+        }
+        batchesToInsert.push({
+          batchId,
+          department: dept,
+          students,
+        });
+      }
+    }
+    await Batch.insertMany(batchesToInsert);
+
+    // Verification
+    console.log('Verifying assignments...');
+    for (const teacher of teachers) {
+      console.log(
+        `${teacher.name} (${teacher.department}): ${teacher.assignedSubjects.length} subjects, CC: ${
+          teacher.coordinatorFor || 'None'
+        }`
+      );
+      if (teacher.assignedSubjects.length < 2) {
+        console.warn(`${teacher.name} has fewer than 2 subjects!`);
+      }
+    }
+
+    console.log('Seeding completed successfully!');
+    console.log(`Total teachers: ${teachers.length}, Total subjects: ${subjects.length}, Total CCs assigned: ${ccAssigned.size}`);
+    process.exit(0);
+  } catch (error) {
+    console.error('Error seeding data:', error);
+    process.exit(1);
+  }
+}
+
+seed();
+
+==================================================
+// studentController.js
+==================================================
+
+const Batch = require('../models/batchModel');
+
+exports.getStudents = async (req, res) => {
+  try {
+    const batches = await Batch.find({});
+    const students = batches.reduce((acc, batch) => {
+      const batchStudents = batch.students.map(student => ({
+        ...student.toObject(), // Convert Mongoose document to plain object
+        batchId: batch.batchId // Add batchId to each student
+      }));
+      return acc.concat(batchStudents);
+    }, []);
+    return res.status(200).json(students);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
+// controllers/studentController.js
+exports.getBatches = async (req, res) => {
+  try {
+    const batches = await Batch.find({}); // Remove projection to include all fields
+    return res.status(200).json(batches);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+==================================================
+// instructorController.js
+==================================================
+
+const User = require('../models/userModel');
+const Mark = require('../models/markModel');
+const Subject = require('../models/subjectModel');
+
+exports.getSubjects = async (req, res) => {
+  try {
+    // req.user is set by protect() middleware
+    const user = req.user;
+    // Extract subject codes from the assignedSubjects array of the user
+    const subjectCodes = user.assignedSubjects.map((s) => s.subjectCode);
+    // Find subjects matching these codes and populate the coordinator field
+    const subjects = await Subject.find({ subjectCode: { $in: subjectCodes } })
+      .populate('coordinator');
+    return res.status(200).json(subjects);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.uploadMarks = async (req, res) => {
+  try {
+    /* 
+      Suppose req.body contains an array of marks:
+      [
+        { rollNo, subjectCode, MSTQ1, MSTQ2, ... },
+        ...
+      ]
+    */
+    const marksArray = req.body.marks || [];
+    for (let record of marksArray) {
+      const { rollNo, subjectCode } = record;
+      // Find or create Mark doc
+      let markDoc = await Mark.findOne({ rollNo, subjectCode });
+      if (!markDoc) {
+        markDoc = new Mark(record);
+      } else {
+        Object.assign(markDoc, record); // update existing fields
+      }
+      await markDoc.save();
+    }
+    return res.status(200).json({ message: 'Marks uploaded successfully.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
+==================================================
+// adminController.js
+==================================================
+
+const User = require('../models/userModel');
+const Subject = require('../models/subjectModel');
+const Batch = require('../models/batchModel');
+const bcrypt = require('bcryptjs');
+const Department = require('../models/departmentModel');
+const mongoose = require('mongoose');
+exports.getAllTeachers = async (req, res) => {
+  try {
+    // Fetch all users with the instructor role
+    const teachers = await User.find({ role: 'instructor' });
+    return res.status(200).json(teachers);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateTeacher = async (req, res) => {
+  try {
+    const teacher = await User.findById(req.params.id);
+    if (!teacher) {
+      return res.status(404).json({ message: 'Teacher not found' });
+    }
+
+    // Update teacher fields from the request body
+    teacher.name = req.body.name || teacher.name;
+    teacher.department = req.body.department || teacher.department;
+    teacher.role = req.body.role || teacher.role;
+    // coordinatorFor holds the subject code if the teacher is assigned as CC for a subject.
+    teacher.coordinatorFor = req.body.coordinatorFor || null;
+
+    await teacher.save();
+
+    res.status(200).json({ message: 'Teacher updated successfully', teacher });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// controllers/adminController.js
+exports.assignSubjects = async (req, res) => {
+  try {
+    const { teacherId, subjectCode, isCoordinator } = req.body;
+
+    // Validate input
+    if (!teacherId || !subjectCode) {
+      return res.status(400).json({ message: 'Teacher ID and Subject Code are required' });
+    }
+
+    // Validate teacherId as a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(teacherId)) {
+      return res.status(400).json({ message: 'Invalid Teacher ID' });
+    }
+
+    // Find the teacher
+    const user = await User.findById(teacherId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Update user's assignedSubjects if not already assigned
+    if (!user.assignedSubjects.some((s) => s.subjectCode === subjectCode)) {
+      user.assignedSubjects.push({ subjectCode, isCoordinator: !!isCoordinator });
+    } else if (isCoordinator !== undefined) {
+      // Update coordinator status if already assigned
+      user.assignedSubjects = user.assignedSubjects.map((s) =>
+        s.subjectCode === subjectCode ? { ...s, isCoordinator: !!isCoordinator } : s
+      );
+    }
+    await user.save();
+
+    // Update Subject's instructors array
+    const subject = await Subject.findOne({ subjectCode });
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+
+    // Add instructor if not already included
+    if (!subject.instructors.some((i) => i.instructorId.toString() === teacherId)) {
+      subject.instructors.push({
+        instructorId: teacherId, // Explicitly set instructorId
+        students: [], // Initialize empty students array
+      });
+    } else if (isCoordinator !== undefined) {
+      // Update existing instructor entry if coordinator status changes
+      subject.instructors = subject.instructors.map((i) =>
+        i.instructorId.toString() === teacherId ? { ...i, isCoordinator: !!isCoordinator } : i
+      );
+    }
+
+    // Update coordinator if isCoordinator is true
+    if (isCoordinator) {
+      subject.coordinator = teacherId;
+    } else if (subject.coordinator && subject.coordinator.toString() === teacherId && !isCoordinator) {
+      subject.coordinator = null; // Remove coordinator if isCoordinator is false
+    }
+
+    await subject.save();
+
+    return res.status(200).json({ message: 'Subject assigned successfully.' });
+  } catch (error) {
+    console.error('Error in assignSubjects:', error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// NEW: Get instructors by department
+// controllers/adminController.js
+exports.getInstructorsByDepartment = async (req, res) => {
+  try {
+    const { department } = req.query;
+    const query = { role: 'instructor' };
+    if (department) query.department = department;
+    const instructors = await User.find(query);
+    return res.status(200).json(instructors);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+exports.assignStudentsToInstructor = async (req, res) => {
+  try {
+    const { subjectId, instructorId, rollNos } = req.body;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+
+    let instructorData = subject.instructors.find(i => i.instructorId.equals(instructorId));
+    if (!instructorData) {
+      instructorData = { instructorId, students: [] };
+      subject.instructors.push(instructorData);
+    }
+
+    instructorData.students = rollNos.map(rollNo => ({ rollNo }));
+    await subject.save();
+    res.status(200).json({ message: 'Students assigned successfully', subject });
+  } catch (error) {
+    console.error('Error assigning students:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+// controllers/adminController.js
+exports.uploadStudentTagging = async (req, res) => {
+  try {
+    const { csvData } = req.body;
+    if (!Array.isArray(csvData) || csvData.length === 0) {
+      return res.status(400).json({ message: 'Invalid or empty CSV data' });
+    }
+
+    const errors = [];
+    const validAssignments = [];
+
+    for (const [index, row] of csvData.entries()) {
+      const { RollNo, SubjectCode, InstructorId } = row;
+
+      // Validate required fields
+      if (!RollNo || !SubjectCode || !InstructorId) {
+        errors.push(`Row ${index + 1}: Missing required fields (RollNo, SubjectCode, InstructorId)`);
+        continue;
+      }
+
+      // Validate student existence
+      const batch = await Batch.findOne({ 'students.rollNo': RollNo });
+      if (!batch) {
+        errors.push(`Row ${index + 1}: Student ${RollNo} not found`);
+        continue;
+      }
+
+      // Validate subject existence
+      const subject = await Subject.findOne({ subjectCode: SubjectCode });
+      if (!subject) {
+        errors.push(`Row ${index + 1}: Subject ${SubjectCode} not found`);
+        continue;
+      }
+
+      // Validate instructor existence and role
+      const instructor = await User.findById(InstructorId);
+      if (!instructor || instructor.role !== 'instructor') {
+        errors.push(`Row ${index + 1}: Instructor ${InstructorId} not found or invalid`);
+        continue;
+      }
+
+      // Check if instructor is assigned to the subject
+      if (!instructor.assignedSubjects.some(s => s.subjectCode === SubjectCode)) {
+        errors.push(`Row ${index + 1}: Instructor ${instructor.name} not assigned to ${SubjectCode}`);
+        continue;
+      }
+
+      // Check for duplicate assignment in the same subject
+      const existingAssignment = subject.instructors.find(i => 
+        i.students.some(s => s.rollNo === RollNo) && i.instructorId.toString() !== InstructorId
+      );
+      if (existingAssignment) {
+        errors.push(`Row ${index + 1}: Student ${RollNo} already assigned to another instructor for ${SubjectCode}`);
+        continue;
+      }
+
+      validAssignments.push({ RollNo, SubjectCode, InstructorId });
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({ message: 'CSV contains errors', errors });
+    }
+
+    // Process valid assignments
+    for (const { RollNo, SubjectCode, InstructorId } of validAssignments) {
+      const subject = await Subject.findOne({ subjectCode: SubjectCode });
+      let instructorData = subject.instructors.find(i => i.instructorId.toString() === InstructorId);
+      if (!instructorData) {
+        instructorData = { instructorId: InstructorId, students: [] };
+        subject.instructors.push(instructorData);
+      }
+      if (!instructorData.students.some(s => s.rollNo === RollNo)) {
+        instructorData.students.push({ rollNo: RollNo });
+      }
+      await subject.save();
+    }
+
+    res.status(200).json({ message: 'Students tagged successfully' });
+  } catch (error) {
+    console.error('Error uploading student tagging:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// NEW: Generate CSV Template for Tagging
+exports.generateTaggingTemplate = async (req, res) => {
+  try {
+    const batches = await Batch.find({});
+    const subjects = await Subject.find({});
+    const instructors = await User.find({ role: 'instructor' });
+
+    const headers = ['RollNo', 'SubjectCode', 'InstructorId'];
+    let csvContent = headers.join(',') + '\n';
+
+    // Optionally pre-fill with sample data or leave blank for admins to fill
+    batches.forEach(batch => {
+      batch.students.forEach(student => {
+        csvContent += `${student.rollNo},,\n`; // Leave SubjectCode and InstructorId blank
+      });
+    });
+
+    res.setHeader('Content-disposition', 'attachment; filename=student_tagging_template.csv');
+    res.set('Content-Type', 'text/csv');
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error('Error generating tagging template:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.assignBatchToTeacher = async (req, res) => {
+  try {
+    const { batchId, subjectCode, instructorId } = req.body;
+    if (!batchId || !subjectCode || !instructorId) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const batch = await Batch.findOne({ batchId });
+    if (!batch) {
+      return res.status(404).json({ message: `Batch ${batchId} not found` });
+    }
+
+    const subject = await Subject.findOne({ subjectCode });
+    if (!subject) {
+      return res.status(404).json({ message: `Subject ${subjectCode} not found` });
+    }
+
+    const instructor = await User.findById(instructorId);
+    if (!instructor || instructor.role !== 'instructor') {
+      return res.status(404).json({ message: `Instructor ${instructorId} not found or invalid` });
+    }
+
+    if (!instructor.assignedSubjects.some(s => s.subjectCode === subjectCode)) {
+      return res.status(403).json({ message: `Instructor ${instructor.name} not assigned to ${subjectCode}` });
+    }
+
+    let instructorData = subject.instructors.find(i => i.instructorId.toString() === instructorId);
+    if (!instructorData) {
+      instructorData = { instructorId, students: [] };
+      subject.instructors.push(instructorData);
+    }
+
+    batch.students.forEach(student => {
+      if (!instructorData.students.some(s => s.rollNo === student.rollNo)) {
+        instructorData.students.push({ rollNo: student.rollNo });
+      }
+    });
+
+    await subject.save();
+    res.status(200).json({ message: `Batch ${batchId} assigned to ${instructor.name} for ${subjectCode}` });
+  } catch (error) {
+    console.error('Error assigning batch:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.assignStudentToTeacher = async (req, res) => {
+  try {
+    const { rollNo, subjectCode, instructorId } = req.body;
+    if (!rollNo || !subjectCode || !instructorId) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const subject = await Subject.findOne({ subjectCode });
+    if (!subject) {
+      return res.status(404).json({ message: `Subject ${subjectCode} not found` });
+    }
+
+    const instructor = await User.findById(instructorId);
+    if (!instructor || instructor.role !== 'instructor') {
+      return res.status(404).json({ message: `Instructor ${instructorId} not found or invalid` });
+    }
+
+    if (!instructor.assignedSubjects.some(s => s.subjectCode === subjectCode)) {
+      return res.status(403).json({ message: `Instructor ${instructor.name} not assigned to ${subjectCode}` });
+    }
+
+    const existingAssignment = subject.instructors.find(i => 
+      i.students.some(s => s.rollNo === rollNo) && i.instructorId.toString() !== instructorId
+    );
+    if (existingAssignment) {
+      return res.status(400).json({ message: `Student ${rollNo} already assigned to another instructor for ${subjectCode}` });
+    }
+
+    let instructorData = subject.instructors.find(i => i.instructorId.toString() === instructorId);
+    if (!instructorData) {
+      instructorData = { instructorId, students: [] };
+      subject.instructors.push(instructorData);
+    }
+
+    if (!instructorData.students.some(s => s.rollNo === rollNo)) {
+      instructorData.students.push({ rollNo });
+    }
+
+    await subject.save();
+    res.status(200).json({ message: `Student ${rollNo} assigned to ${instructor.name} for ${subjectCode}` });
+  } catch (error) {
+    console.error('Error assigning student:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.removeStudentAssignment = async (req, res) => {
+  try {
+    const { rollNo, subjectCode, instructorId } = req.body;
+    if (!rollNo || !subjectCode || !instructorId) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const subject = await Subject.findOne({ subjectCode });
+    if (!subject) {
+      return res.status(404).json({ message: `Subject ${subjectCode} not found` });
+    }
+
+    const instructorData = subject.instructors.find(i => i.instructorId.toString() === instructorId);
+    if (!instructorData) {
+      return res.status(404).json({ message: `Instructor ${instructorId} not assigned to ${subjectCode}` });
+    }
+
+    const studentIndex = instructorData.students.findIndex(s => s.rollNo === rollNo);
+    if (studentIndex === -1) {
+      return res.status(404).json({ message: `Student ${rollNo} not assigned to this instructor for ${subjectCode}` });
+    }
+
+    instructorData.students.splice(studentIndex, 1);
+    await subject.save();
+    res.status(200).json({ message: `Student ${rollNo} removed from ${subjectCode} under instructor ${instructorId}` });
+  } catch (error) {
+    console.error('Error removing student assignment:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+// Add Teacher
+exports.addTeacher = async (req, res) => {
+  try {
+    const { name, role, department, email, coordinatorFor, assignedSubjects } = req.body;
+    if (!name || !role || !department || !email) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const existingTeacher = await User.findOne({ email });
+    if (existingTeacher) {
+      return res.status(400).json({ message: 'Email already exists' });
+    }
+
+    const teacher = new User({
+      name,
+      role,
+      department,
+      email,
+      coordinatorFor: coordinatorFor || null,
+      assignedSubjects: assignedSubjects || [],
+      password: await bcrypt.hash('default123', 10), // Default password, should be changed by user
+    });
+
+    await teacher.save();
+    res.status(201).json(teacher);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Delete Teacher
+exports.deleteTeacher = async (req, res) => {
+  try {
+    const teacher = await User.findById(req.params.id);
+    if (!teacher) {
+      return res.status(404).json({ message: 'Teacher not found' });
+    }
+
+    await User.deleteOne({ _id: req.params.id });
+    res.status(200).json({ message: 'Teacher deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+exports.getDepartments = async (req, res) => {
+  try {
+    const departments = await Department.find({}, 'name'); // Fetch only names
+    res.status(200).json(departments.map(d => d.name));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.addDepartment = async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ message: 'Department name is required' });
+    }
+    const existingDept = await Department.findOne({ name });
+    if (existingDept) {
+      return res.status(400).json({ message: 'Department already exists' });
+    }
+    const department = new Department({ name });
+    await department.save();
+    res.status(201).json({ name });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.deleteDepartment = async (req, res) => {
+  try {
+    const { id } = req.params; // Expecting department name as ID
+    const department = await Department.findOne({ name: id });
+    if (!department) {
+      return res.status(404).json({ message: 'Department not found' });
+    }
+    await Department.deleteOne({ name: id });
+    await Subject.deleteMany({ department: id });
+    await User.updateMany({ department: id }, { $set: { department: null } });
+    res.status(200).json({ message: 'Department and its subjects deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Add Subject (New endpoint)
+exports.addSubject = async (req, res) => {
+  try {
+    const { subjectName, subjectCode, department } = req.body;
+    if (!subjectName || !subjectCode || !department) {
+      return res.status(400).json({ message: 'All fields are required' });
+    }
+    const existingSubject = await Subject.findOne({ subjectCode });
+    if (existingSubject) {
+      return res.status(400).json({ message: 'Subject code already exists' });
+    }
+    const subject = new Subject({
+      subjectName,
+      subjectCode,
+      department,
+      instructors: [],
+      coordinator: null,
+    });
+    await subject.save();
+    res.status(201).json(subject);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+// Delete Department (Updated to cascade delete subjects)
+exports.deleteDepartment = async (req, res) => {
+  try {
+    const { id } = req.params; // Expecting department name as ID
+    // Delete all subjects in this department
+    await Subject.deleteMany({ department: id });
+    // Optionally, update users to remove department reference
+    await User.updateMany({ department: id }, { $set: { department: null } });
+    res.status(200).json({ message: 'Department and its subjects deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Delete Subject (New endpoint)
+exports.deleteSubject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const subject = await Subject.findById(id);
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+    await Subject.deleteOne({ _id: id });
+    // Clean up references in User model
+    await User.updateMany(
+      { 'assignedSubjects.subjectCode': subject.subjectCode },
+      { $pull: { assignedSubjects: { subjectCode: subject.subjectCode } } }
+    );
+    await User.updateMany(
+      { coordinatorFor: subject.subjectCode },
+      { $set: { coordinatorFor: null } }
+    );
+    res.status(200).json({ message: 'Subject deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting subject:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+==================================================
+// subjectController.js
+==================================================
+
+// controllers/subjectController.js
+const Subject = require('../models/subjectModel');
+const Batch = require('../models/batchModel');
+const StudentMark = require('../models/studentMarkModel');
+
+exports.getSubjectsByDepartment = async (req, res) => {
+  try {
+    const { department, subjectCode } = req.query;
+    let query = {};
+    if (subjectCode) query.subjectCode = subjectCode;
+    else if (department) query.department = department;
+
+    const subjects = await Subject.find(query).populate('coordinator');
+    res.status(200).json(subjects);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getStudentsBySubject = async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+
+    const isInstructor = subject.instructors.some(i => i.instructorId.equals(req.user._id));
+    const isCoordinator = subject.coordinator && subject.coordinator.equals(req.user._id);
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isInstructor && !isCoordinator && !isAdmin) {
+      return res.status(403).json({ message: 'Not authorized to access this subject' });
+    }
+
+    const students = isAdmin
+      ? subject.instructors.flatMap(i => i.students.map(s => ({ ...s, instructorId: i.instructorId })))
+      : subject.instructors.find(i => i.instructorId.equals(req.user._id))?.students || [];
+
+    const batches = await Batch.find({});
+    const allStudents = batches.reduce((acc, batch) => {
+      return acc.concat(batch.students.map(student => ({
+        ...student.toObject(),
+        batchId: batch.batchId
+      })));
+    }, []);
+
+    const detailedStudents = students.map(student => {
+      const fullStudent = allStudents.find(s => s.rollNo === student.rollNo);
+      return {
+        ...fullStudent || { rollNo: student.rollNo, name: 'Unknown', department: 'Unknown' },
+        instructorId: student.instructorId
+      };
+    });
+
+    res.status(200).json(detailedStudents);
+  } catch (error) {
+    console.error('Error fetching subject students:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getInstructorSubjectData = async (req, res) => {
+  try {
+    const { subjectId } = req.params;
+    const subject = await Subject.findById(subjectId).populate('coordinator');
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+
+    const isInstructor = subject.instructors.some(i => i.instructorId.equals(req.user._id));
+    if (!isInstructor) return res.status(403).json({ message: 'Not authorized to view this subject' });
+
+    const marks = await StudentMark.find({ subjectId, instructorId: req.user._id });
+    res.status(200).json({ subject, marks });
+  } catch (error) {
+    console.error('Error in getInstructorSubjectData:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.submitInstructorMarks = async (req, res) => {
+  try {
+    const { subjectId, marksData, evalCriteria } = req.body;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+
+    const instructorData = subject.instructors.find(i => i.instructorId.equals(req.user._id));
+    if (!instructorData) return res.status(403).json({ message: 'Not authorized to submit marks' });
+
+    const assignedRollNos = instructorData.students.map(s => s.rollNo);
+    const validMarksData = marksData.filter(mark => assignedRollNos.includes(mark.rollNo));
+
+    for (const entry of validMarksData) {
+      const { rollNo, data } = entry;
+      console.log(`Saving marks for ${rollNo}:`, data); // Log data being saved
+      const cloMarks = {};
+      const cloTotals = {};
+
+      if (!subject.evaluationSchema[evalCriteria]) {
+        console.error(`Evaluation criterion ${evalCriteria} not found in schema`);
+        continue;
+      }
+
+      const criteria = subject.evaluationSchema[evalCriteria];
+      const weightage = (criteria.weightage || 100) / 100;
+      const questions = criteria.questions || [];
+
+      questions.forEach((q) => {
+        if (q.parts && q.parts.length > 0) {
+          q.parts.forEach((p) => {
+            const key = `${evalCriteria}_Q${q.questionNo}_P${p.partNo}`;
+            const mark = parseFloat(data[key]) || 0;
+            const scaledMark = mark * weightage;
+            const cloMappings = p.cloMappings || q.cloMappings || [];
+            cloMappings.forEach(clo => {
+              cloMarks[clo] = (cloMarks[clo] || 0) + scaledMark;
+              cloTotals[clo] = (cloTotals[clo] || 0) + p.maxMarks * weightage;
+            });
+          });
+        } else {
+          const key = `${evalCriteria}_Q${q.questionNo}`;
+          const mark = parseFloat(data[key]) || 0;
+          const scaledMark = mark * weightage;
+          const cloMappings = q.cloMappings || [];
+          cloMappings.forEach(clo => {
+            cloMarks[clo] = (cloMarks[clo] || 0) + scaledMark;
+            cloTotals[clo] = (cloTotals[clo] || 0) + q.maxMarks * weightage;
+          });
+        }
+      });
+
+      await StudentMark.updateOne(
+        { subjectId, rollNo, instructorId: req.user._id, evalCriteria },
+        {
+          $set: {
+            data,
+            cloMarks,
+            cloTotals,
+            updatedAt: Date.now(),
+          },
+        },
+        { upsert: true }
+      );
+
+      // Verify save by fetching back
+      const savedMark = await StudentMark.findOne({ subjectId, rollNo, instructorId: req.user._id, evalCriteria });
+      console.log(`Saved mark for ${rollNo}:`, savedMark);
+    }
+    res.status(200).json({ message: 'Marks submitted successfully' });
+  } catch (error) {
+    console.error('Error submitting marks:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// New endpoint for real-time CLO calculation
+exports.calculateCLOMarksRealTime = async (req, res) => {
+  try {
+    const { subjectId, marksData, evalCriteria } = req.body;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+
+    const instructorData = subject.instructors.find(i => i.instructorId.equals(req.user._id));
+    if (!instructorData) return res.status(403).json({ message: 'Not authorized' });
+
+    if (!subject.evaluationSchema[evalCriteria]) {
+      return res.status(400).json({ message: `Evaluation criterion ${evalCriteria} not found` });
+    }
+
+    const criteria = subject.evaluationSchema[evalCriteria];
+    const weightage = (criteria.weightage || 100) / 100;
+    const questions = criteria.questions || [];
+
+    const calculatedMarks = marksData.map(entry => {
+      const { rollNo, data } = entry;
+      const cloMarks = {};
+      const cloTotals = {};
+      let totalMarksAchieved = 0;
+
+      questions.forEach((q) => {
+        if (q.parts && q.parts.length > 0) {
+          q.parts.forEach((p) => {
+            const key = `${evalCriteria}_Q${q.questionNo}_P${p.partNo}`;
+            const mark = parseFloat(data[key]) || 0;
+            totalMarksAchieved += mark;
+            const scaledMark = mark * weightage;
+            const cloMappings = p.cloMappings || q.cloMappings || [];
+            cloMappings.forEach(clo => {
+              cloMarks[clo] = (cloMarks[clo] || 0) + scaledMark;
+              cloTotals[clo] = (cloTotals[clo] || 0) + p.maxMarks * weightage;
+            });
+          });
+        } else {
+          const key = `${evalCriteria}_Q${q.questionNo}`;
+          const mark = parseFloat(data[key]) || 0;
+          totalMarksAchieved += mark;
+          const scaledMark = mark * weightage;
+          const cloMappings = q.cloMappings || [];
+          cloMappings.forEach(clo => {
+            cloMarks[clo] = (cloMarks[clo] || 0) + scaledMark;
+            cloTotals[clo] = (cloTotals[clo] || 0) + q.maxMarks * weightage;
+          });
+        }
+      });
+
+      // Ensure every CLO defined in the subject is returned, even if zero.
+      if (subject.CLOs && subject.CLOs.length > 0) {
+        subject.CLOs.forEach(clo => {
+          const key = `CLO${clo.cloNumber}`;
+          if (cloMarks[key] === undefined) {
+            cloMarks[key] = 0;
+            cloTotals[key] = 0;
+          }
+        });
+      }
+
+      return {
+        rollNo,
+        data,
+        cloMarks,
+        cloTotals,
+        totalMarks: totalMarksAchieved,
+        totalMarksWeightage: totalMarksAchieved * weightage,
+      };
+    });
+
+    res.status(200).json(calculatedMarks);
+  } catch (error) {
+    console.error('Error calculating CLO marks in real-time:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// controllers/subjectController.js (updated generateCSVTemplate)
+exports.generateCSVTemplate = async (req, res) => {
+  try {
+    const { subjectId, evalCriteria } = req.query;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+
+    const isInstructor = subject.instructors.some(i => i.instructorId.equals(req.user._id));
+    const isCoordinator = subject.coordinator && subject.coordinator.equals(req.user._id);
+    if (!isInstructor && !isCoordinator) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    const instructorData = subject.instructors.find(i => i.instructorId.equals(req.user._id));
+    const students = instructorData ? instructorData.students : [];
+
+    // Build headers without appending the max marks in parentheses.
+    const headers = ['RollNo', 'Student Name'];
+    if (evalCriteria && subject.evaluationSchema[evalCriteria]) {
+      const questions = subject.evaluationSchema[evalCriteria].questions || [];
+      questions.forEach((q) => {
+        if (q.parts && q.parts.length > 0) {
+          q.parts.forEach((p) => {
+            // Use a consistent key format without (maxMarks)
+            headers.push(`${evalCriteria}_Q${q.questionNo}_P${p.partNo}`);
+          });
+        } else {
+          headers.push(`${evalCriteria}_Q${q.questionNo}`);
+        }
+      });
+    }
+    // Append weightage columns, totals, and CLO headers.
+    const cloHeaders = subject.CLOs.map(clo => `CLO${clo.cloNumber}`);
+    headers.push(...headers.slice(2).map(h => `${h}_Weightage`), 'TotalMarks', 'TotalMarks_Weightage', ...cloHeaders);
+
+    let csvContent = headers.join(',') + '\n';
+    students.forEach((student) => {
+      const row = [student.rollNo, student.name || 'Unknown', ...Array(headers.length - 2).fill('')];
+      csvContent += row.join(',') + '\n';
+    });
+
+    res.setHeader('Content-disposition', `attachment; filename=${evalCriteria}_template.csv`);
+    res.set('Content-Type', 'text/csv');
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error('Error generating CSV template:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+exports.getInstructorSubjects = async (req, res) => {
+  try {
+    const subjects = await Subject.find({
+      $or: [
+        { coordinator: req.user._id },
+        { 'instructors.instructorId': req.user._id },
+      ],
+    }).populate('coordinator');
+
+    const subjectsWithCount = subjects.map(subject => {
+      const instructorData = subject.instructors.find(i => i.instructorId.equals(req.user._id));
+      const studentsCount = instructorData ? instructorData.students.length : 0;
+      return { ...subject.toObject(), studentsCount };
+    });
+
+    res.status(200).json(subjectsWithCount);
+  } catch (error) {
+    console.error('Error fetching instructor subjects:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+==================================================
+// authController.js
+==================================================
+
+const User = require('../models/userModel');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+exports.loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // 1) Check if user with that email exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // 2) Compare password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    // 3) Generate JWT with coordinatorFor included
+    const token = jwt.sign(
+      { id: user._id, coordinatorFor: user.coordinatorFor }, // Include coordinatorFor in token
+      process.env.JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    // Log user details for debugging
+    console.log('Logged in user:', {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      coordinatorFor: user.coordinatorFor,
+    });
+
+    // 4) Return user info + token with additional fields
+    return res.status(200).json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        coordinatorFor: user.coordinatorFor,
+        assignedSubjects: user.assignedSubjects,
+      },
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+==================================================
+// ccController.js
+==================================================
+
+// controllers/ccController.js
+const Subject = require('../models/subjectModel');
+const Mark = require('../models/markModel');
+const StudentMark = require('../models/studentMarkModel');
+const User = require('../models/userModel');
+const mongoose = require('mongoose');
+
+// Endpoint: Update CLOs, evaluation settings, and CSV format (accessible only by the CC)
+exports.updateEvaluationSettings = async (req, res) => {
+  try {
+    const { subjectId, CLOs, evaluationSchema, csvFormat } = req.body;
+    const subject = await Subject.findById(subjectId);
+    if (!subject || !subject.coordinator.equals(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden: Only the CC can update settings' });
+    }
+
+    subject.CLOs = CLOs || subject.CLOs;
+    subject.evaluationSchema = evaluationSchema || subject.evaluationSchema;
+    subject.csvFormat = csvFormat || subject.csvFormat;
+
+    await subject.save();
+    res.status(200).json({ message: 'Evaluation settings updated successfully', subject });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Endpoint: Upload Integrated Marks (for both mid-semester and end-semester integration)
+exports.uploadIntegratedMarks = async (req, res) => {
+  try {
+    const marksArray = req.body.marks || [];
+    for (let record of marksArray) {
+      const { rollNo, subjectCode } = record;
+      let markDoc = await Mark.findOne({ rollNo, subjectCode });
+      if (!markDoc) {
+        markDoc = new Mark(record);
+      } else {
+        Object.assign(markDoc, record);
+      }
+      await markDoc.save();
+    }
+    res.status(200).json({ message: 'Marks uploaded and integrated successfully.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Endpoint: Generate CSV Template for Instructor
+exports.generateCSVTemplate = async (req, res) => {
+  try {
+    const { subjectId, evalCriteria } = req.query;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+
+    const instructorData = subject.instructors.find(i => i.instructorId.equals(req.user._id));
+    if (!instructorData) {
+      return res.status(403).json({ message: 'You are not an instructor for this subject' });
+    }
+    const students = instructorData.students || [];
+
+    // Build headers: RollNo + question columns + CLO columns + TotalMarks.
+    const headers = ['RollNo'];
+    if (evalCriteria && subject.evaluationSchema[evalCriteria]) {
+      const questions = subject.evaluationSchema[evalCriteria].questions || [];
+      questions.forEach((q) => {
+        if (q.parts && q.parts.length > 0) {
+          q.parts.forEach((p) => {
+            headers.push(`${evalCriteria}_Q${q.questionNo}_P${p.partNo}`);
+          });
+        } else {
+          headers.push(`${evalCriteria}_Q${q.questionNo}`);
+        }
+      });
+    }
+    const cloKeys = subject.CLOs.map(clo => `CLO${clo.cloNumber}`);
+    headers.push(...cloKeys);
+    headers.push('TotalMarks');
+
+    let csvContent = headers.join(',') + '\n';
+    students.forEach((student) => {
+      const row = [student.rollNo, ...Array(headers.length - 1).fill('')];
+      csvContent += row.join(',') + '\n';
+    });
+
+    res.setHeader('Content-disposition', `attachment; filename=${evalCriteria}_template.csv`);
+    res.set('Content-Type', 'text/csv');
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error('Error generating CSV template:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Endpoint: Get Instructor Submissions (for CC to view)
+exports.getInstructorSubmissions = async (req, res) => {
+  try {
+    const { subjectId, evalCriteria } = req.query;
+    const subject = await Subject.findById(subjectId).populate({
+      path: 'instructors.instructorId',
+      select: 'name',
+    });
+    if (!subject) {
+      return res.status(404).json({ message: 'Subject not found' });
+    }
+    if (!subject.coordinator.equals(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden: Only the CC can view submissions' });
+    }
+
+    const submissions = await Promise.all(
+      subject.instructors.map(async (instructorData) => {
+        const instructorId = instructorData.instructorId._id;
+        const instructorName = instructorData.instructorId.name;
+        const marks = await StudentMark.find({ subjectId, instructorId, evalCriteria });
+        const hasSubmitted = marks.length > 0;
+        return {
+          instructorId,
+          instructorName,
+          hasSubmitted,
+          fileUrl: hasSubmitted
+            ? `/api/cc/view-submission?subjectId=${subjectId}&instructorId=${instructorId}&evalCriteria=${evalCriteria}`
+            : null,
+        };
+      })
+    );
+
+    res.status(200).json(submissions);
+  } catch (error) {
+    console.error('Error fetching instructor submissions:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.viewInstructorSubmission = async (req, res) => {
+  try {
+    const { subjectId, instructorId, evalCriteria } = req.query;
+    console.log('Viewing submission:', { subjectId, instructorId, evalCriteria });
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+    if (!subject.coordinator.equals(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden: Only the CC can view submissions' });
+    }
+
+    const marks = await StudentMark.find({
+      subjectId,
+      instructorId: new mongoose.Types.ObjectId(instructorId),
+      evalCriteria,
+    });
+    console.log('Found marks:', marks.length);
+    if (marks.length === 0) {
+      return res.status(404).json({ message: 'No submission found for this instructor and criterion' });
+    }
+
+    // Build question keys based on the evaluation schema
+    const criteria = subject.evaluationSchema[evalCriteria];
+    if (!criteria || !criteria.questions) {
+      return res.status(400).json({ message: 'Evaluation criterion not defined or has no questions' });
+    }
+    const questions = criteria.questions;
+    const questionKeys = [];
+    questions.forEach(q => {
+      if (q.parts && q.parts.length > 0) {
+        q.parts.forEach(p => {
+          questionKeys.push(`${evalCriteria}_Q${q.questionNo}_P${p.partNo}`);
+        });
+      } else {
+        questionKeys.push(`${evalCriteria}_Q${q.questionNo}`);
+      }
+    });
+    const weightageKeys = questionKeys.map(key => `${key}_Weightage`);
+    const cloKeys = subject.CLOs.map(clo => `CLO${clo.cloNumber}`);
+    const scaledCloKeys = cloKeys.map(key => `${key}_scaled`); // Add scaled CLO columns
+
+    // Headers: RollNo, Student Name, questions, weightages, totals, CLOs, scaled CLOs
+    const headers = [
+      'RollNo',
+      'Student Name',
+      ...questionKeys,
+      ...weightageKeys,
+      'TotalMarks',
+      'TotalMarks_Weightage',
+      ...cloKeys,
+      ...scaledCloKeys,
+    ];
+    let csvContent = headers.join(',') + '\n';
+
+    marks.forEach(mark => {
+      let row = [];
+      row.push(mark.rollNo || '');
+      row.push(mark.data.get('Student Name') || ''); // Use .get() for Mongoose Map
+      questionKeys.forEach(key => {
+        row.push(mark.data.get(key) !== undefined ? mark.data.get(key) : '');
+      });
+      weightageKeys.forEach(wKey => {
+        row.push(mark.data.get(wKey) !== undefined ? mark.data.get(wKey) : '');
+      });
+      row.push(mark.data.get('TotalMarks') !== undefined ? mark.data.get('TotalMarks') : '');
+      row.push(mark.data.get('TotalMarks_Weightage') !== undefined ? mark.data.get('TotalMarks_Weightage') : '');
+      cloKeys.forEach(cKey => {
+        row.push(mark.data.get(cKey) !== undefined ? mark.data.get(cKey) : 0);
+      });
+      scaledCloKeys.forEach(sKey => {
+        const cloKey = sKey.replace('_scaled', '');
+        row.push(mark.cloMarks.get(cloKey) !== undefined ? mark.cloMarks.get(cloKey) : 0);
+      });
+      csvContent += row.join(',') + '\n';
+    });
+
+    console.log('Generated CSV:', csvContent);
+    res.setHeader('Content-disposition', `attachment; filename=${evalCriteria}_submission_${instructorId}.csv`);
+    res.setHeader('Content-Type', 'text/csv');
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error('Error viewing instructor submission:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+
+// Endpoint: Aggregate Submissions (for CC to download aggregated marks)
+exports.aggregateSubmissions = async (req, res) => {
+  try {
+    const { subjectId, evalCriteria } = req.query;
+    const subject = await Subject.findById(subjectId);
+    if (!subject) return res.status(404).json({ message: 'Subject not found' });
+    if (!subject.coordinator.equals(req.user._id)) {
+      return res.status(403).json({ message: 'Forbidden: Only the CC can aggregate submissions' });
+    }
+
+    // Fetch marks for the given subject and evaluation criteria
+    const marks = await StudentMark.find({ subjectId, evalCriteria });
+    console.log('Fetched marks for aggregation:', marks); // Debug log to check fetched data
+    if (marks.length === 0) return res.status(404).json({ message: 'No submissions found for this criterion' });
+
+    // Extract questions from the evaluation schema
+    const criteria = subject.evaluationSchema[evalCriteria] || {};
+    const questions = criteria.questions || [];
+    const questionKeys = [];
+    questions.forEach(q => {
+      if (q.parts && q.parts.length > 0) {
+        q.parts.forEach(p => {
+          questionKeys.push(`${evalCriteria}_Q${q.questionNo}_P${p.partNo}`);
+        });
+      } else {
+        questionKeys.push(`${evalCriteria}_Q${q.questionNo}`);
+      }
+    });
+    const weightageKeys = questionKeys.map(key => `${key}_Weightage`);
+    const cloKeys = subject.CLOs.map(clo => `CLO${clo.cloNumber}`);
+
+    // Define CSV headers
+    const headers = [
+      'RollNo',
+      'Student Name',
+      ...questionKeys,
+      ...weightageKeys,
+      'TotalMarks',
+      'TotalMarks_Weightage',
+      ...cloKeys,
+    ];
+    let csvContent = headers.join(',') + '\n';
+
+    // Aggregate marks by roll number
+    const aggregatedMarks = new Map();
+    marks.forEach(mark => {
+      // Build a data object with safe defaults using .get() for Mongoose Map
+      const dataObj = {};
+      dataObj['Student Name'] = mark.data.get('Student Name') || '';
+      questionKeys.forEach(key => {
+        dataObj[key] = mark.data.get(key) !== undefined && mark.data.get(key) !== null ? mark.data.get(key) : '';
+      });
+      weightageKeys.forEach(wKey => {
+        dataObj[wKey] = mark.data.get(wKey) !== undefined && mark.data.get(wKey) !== null ? mark.data.get(wKey) : '';
+      });
+      dataObj['TotalMarks'] = mark.data.get('TotalMarks') !== undefined && mark.data.get('TotalMarks') !== null ? mark.data.get('TotalMarks') : '';
+      dataObj['TotalMarks_Weightage'] = mark.data.get('TotalMarks_Weightage') !== undefined && mark.data.get('TotalMarks_Weightage') !== null ? mark.data.get('TotalMarks_Weightage') : '';
+      cloKeys.forEach(cKey => {
+        dataObj[cKey] = mark.data.get(cKey) !== undefined && mark.data.get(cKey) !== null ? mark.data.get(cKey) : 0;
+      });
+
+      aggregatedMarks.set(mark.rollNo, {
+        rollNo: mark.rollNo,
+        data: dataObj,
+      });
+    });
+
+    // Generate CSV rows from aggregated marks
+    aggregatedMarks.forEach(aggMark => {
+      const row = [
+        aggMark.rollNo,
+        aggMark.data['Student Name'],
+        ...questionKeys.map(key => aggMark.data[key]),
+        ...weightageKeys.map(wKey => aggMark.data[wKey]),
+        aggMark.data['TotalMarks'],
+        aggMark.data['TotalMarks_Weightage'],
+        ...cloKeys.map(cKey => aggMark.data[cKey]),
+      ];
+      csvContent += row.join(',') + '\n';
+    });
+
+    console.log('Aggregated CSV:', csvContent); // Debug log to verify CSV content
+    res.setHeader('Content-disposition', `attachment; filename=${evalCriteria}_aggregated.csv`);
+    res.setHeader('Content-Type', 'text/csv');
+    res.status(200).send(csvContent);
+  } catch (error) {
+    console.error('Error aggregating submissions:', error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+==================================================
+// subjectRoutes.js
+==================================================
+
+const express = require('express');
+const router = express.Router();
+const { protect } = require('../middleware/authMiddleware');
+const {
+  getSubjectsByDepartment,
+  getStudentsBySubject,
+  getInstructorSubjectData,
+  submitInstructorMarks,
+  generateCSVTemplate,
+  getInstructorSubjects,
+  calculateCLOMarksRealTime, // Add new endpoint
+} = require('../controllers/subjectController');
+
+router.get('/', protect, getSubjectsByDepartment);
+router.get('/instructor-subjects', protect, getInstructorSubjects);
+router.get('/:subjectId/students', protect, getStudentsBySubject);
+router.get('/:subjectId/instructor-data', protect, getInstructorSubjectData);
+router.post('/:subjectId/submit-marks', protect, submitInstructorMarks);
+router.get('/generateTemplate', protect, generateCSVTemplate);
+router.post('/:subjectId/calculate-clo-realtime', protect, calculateCLOMarksRealTime); // New route
+
+module.exports = router;
+
+==================================================
+// authRoutes.js
+==================================================
+
+// routes/authRoutes.js
+const express = require('express');
+const router = express.Router();
+const { loginUser } = require('../controllers/authController');
+
+// POST /api/auth/login
+router.post('/login', loginUser);
+
+module.exports = router;
+
+
+==================================================
+// instructorRoutes.js
+==================================================
+
+// routes/instructorRoutes.js
+const express = require('express');
+const router = express.Router();
+const { getSubjects, uploadMarks } = require('../controllers/instructorController');
+const { protect, instructorOnly } = require('../middleware/authMiddleware');
+
+// Instructor routes
+router.get('/subjects', protect, instructorOnly, getSubjects);
+router.post('/uploadMarks', protect, instructorOnly, uploadMarks);
+
+module.exports = router;
+
+
+==================================================
+// index.js
+==================================================
+
+// routes/index.js
+const express = require('express');
+const router = express.Router();
+
+const adminRoutes = require('./adminRoutes');
+const instructorRoutes = require('./instructorRoutes');
+
+router.use('/admin', adminRoutes);
+router.use('/instructor', instructorRoutes);
+
+module.exports = router;
+
+
+==================================================
+// studentRoutes.js
+==================================================
+
+// routes/studentRoutes.js
+const express = require('express');
+const router = express.Router();
+const { getStudents, getBatches } = require('../controllers/studentController');
+
+router.get('/', getStudents);
+router.get('/batches', getBatches);
+
+module.exports = router;
+
+==================================================
+// adminRoutes.js
+==================================================
+
+const express = require('express');
+const router = express.Router();
+const {
+  getAllTeachers,
+  assignSubjects,
+  updateTeacher,
+  getInstructorsByDepartment,
+  assignStudentsToInstructor,
+  uploadStudentTagging,
+  assignBatchToTeacher,
+  assignStudentToTeacher,
+  removeStudentAssignment,
+  generateTaggingTemplate,
+  addTeacher,
+  deleteTeacher,
+  getDepartments,
+  addDepartment,
+  deleteDepartment,
+  addSubject,
+  deleteSubject, // Add this
+} = require('../controllers/adminController');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
+
+router.get('/teachers', protect, adminOnly, getAllTeachers);
+router.put('/teachers/:id', protect, adminOnly, updateTeacher);
+router.post('/teachers', protect, adminOnly, addTeacher);
+router.delete('/teachers/:id', protect, adminOnly, deleteTeacher);
+router.post('/assign', protect, adminOnly, assignSubjects);
+router.get('/instructors', protect, adminOnly, getInstructorsByDepartment);
+router.post('/assign-students', protect, adminOnly, assignStudentsToInstructor);
+router.post('/upload-tagging', protect, adminOnly, uploadStudentTagging);
+router.post('/assign-batch', protect, adminOnly, assignBatchToTeacher);
+router.post('/assign-student', protect, adminOnly, assignStudentToTeacher);
+router.post('/remove-student', protect, adminOnly, removeStudentAssignment);
+router.get('/generate-tagging-template', protect, adminOnly, generateTaggingTemplate);
+router.get('/departments', protect, adminOnly, getDepartments);
+router.post('/departments', protect, adminOnly, addDepartment);
+router.delete('/departments/:id', protect, adminOnly, deleteDepartment);
+router.post('/subjects', protect, adminOnly, addSubject);
+router.delete('/subjects/:id', protect, adminOnly, deleteSubject); // New route
+
+module.exports = router;
+
+==================================================
+// ccRoutes.js
+==================================================
+
+const express = require('express');
+const router = express.Router();
+const { protect, courseCoordinatorOnly } = require('../middleware/authMiddleware');
+const {
+  updateEvaluationSettings,
+  uploadIntegratedMarks,
+  generateCSVTemplate,
+  getInstructorSubmissions,    // New endpoint
+  viewInstructorSubmission, 
+  aggregateSubmissions  // New endpoint
+} = require('../controllers/ccController');
+
+// Use courseCoordinatorOnly to restrict access to CC endpoints
+router.put('/evaluation', protect, courseCoordinatorOnly, updateEvaluationSettings);
+router.post('/uploadIntegratedMarks', protect, courseCoordinatorOnly, uploadIntegratedMarks);
+router.get('/generateTemplate', protect, courseCoordinatorOnly, generateCSVTemplate);
+
+// New routes for instructor submissions and viewing files
+router.get('/instructor-submissions', protect, courseCoordinatorOnly, getInstructorSubmissions);
+router.get('/view-submission', protect, courseCoordinatorOnly, viewInstructorSubmission);
+// routes/ccRoutes.js
+router.get('/aggregate-submissions', protect, courseCoordinatorOnly, aggregateSubmissions);
+module.exports = router;
