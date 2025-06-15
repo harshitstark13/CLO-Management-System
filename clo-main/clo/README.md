@@ -1,6 +1,6 @@
 # CLO Management System
 
-![preview](clo-main/clo/public/assets/images/Admin.png)
+![Admin Dashboard](public/assets/images/Admin.png)
 
 > A centralized **CLO Management System** built using **React**, **Vite.js**, and **Material-UI**. Features include table-based forms, real-time dashboards, and role-based access control for Admins, Coordinators, and Instructors.
 
