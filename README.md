@@ -25,7 +25,7 @@ The **CLO Management System** is a role-based web application built to digitize 
 ---
 
 ## 🚀 Features
-
+![Admin Dashboard](clo-main/clo/public/assets/images/Admin.png)
 - 🔐 Role-based login (Admin, Course Coordinator, Instructor)
 - 📄 Define and manage Course Learning Outcomes
 - 📊 Upload and manage student marks
