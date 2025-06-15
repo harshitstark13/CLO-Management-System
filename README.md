@@ -56,7 +56,7 @@ CLO-Management-System/
 
 ---
 
-✅ Prerequisites
+##✅ Prerequisites
 Ensure the following tools are installed:
 
 Node.js (v16 or above recommended): Download Node.js
@@ -71,17 +71,14 @@ A modern browser (e.g., Chrome)
 
 ```bash
 git clone https://github.com/harshitstark13/CLO-Management-System.git
-```
-
-```bash
 cd CLO-Management-System
 ```
 
-2. Install Dependencies
+## 2. Install Dependencies
 ```bash
 npm install
 ```
-3. Run the Development Server
+## 3. Run the Development Server
 ```bash
 npm run dev
 ```
@@ -93,7 +90,7 @@ npm run dev
 | Instructor         | Enter student marks, view attainment data            |
 
 
-📌 Use Cases
+##📌 Use Cases
 Replace manual CLO tracking with an automated digital system
 
 Improve academic monitoring and reporting
@@ -103,7 +100,7 @@ Export performance data for internal reviews and audits
 Provide educators with insights for improving learning outcomes
 
 
-⚠️ Disclaimer
+##⚠️ Disclaimer
 This project was developed as part of an internship at TIET under mentorship.
 It is strictly prohibited to use, copy, modify, distribute, or deploy this software without prior written permission from the developer and the mentors involved.
 All rights are reserved.
