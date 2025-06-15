@@ -37,6 +37,23 @@ The **CLO Management System** is a role-based web application built to digitize 
 
 ---
 
+📸 Screenshots
+The following screenshots showcase the user interface for different roles within the CLO Management System:
+
+🔐 Admin Dashboard
+The Admin has access to manage users, courses, and oversee CLO mappings and evaluations.
+
+
+👨‍🏫 Instructor (Teacher) View
+Instructors can enter marks, evaluate CLOs automatically, and visualize student performance.
+
+
+📊 CLO Evaluation Summary
+Visualizations help track course learning outcome achievement levels using charts and tables.
+
+
+
+
 ## 📁 Project Structure
 
 CLO-Management-System/
@@ -56,9 +73,18 @@ CLO-Management-System/
 
 ---
 
+✅ Prerequisites
+Ensure the following tools are installed:
+
+Node.js (v16 or above recommended): Download Node.js
+
+Git (for cloning the repository): Download Git
+
+A modern browser (e.g., Chrome)
+
 ## 🖥️ Getting Started
 
-### 1. Clone the Repository
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/harshitstark13/CLO-Management-System.git
@@ -70,7 +96,7 @@ npm install
 
 3. Run the Development Server
 npm run dev
-
+```
 
 | Role               | Permissions                                          |
 | ------------------ | ---------------------------------------------------- |
